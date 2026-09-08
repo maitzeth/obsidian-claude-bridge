@@ -51,44 +51,9 @@ After installation, Claude Code **automatically searches your vault before modif
 
 ## How It Works
 
-### Architecture
-
-```mermaid
-flowchart TB
-    subgraph "Your Machine"
-        V[Obsidian Vault<br/>folder of .md files]
-        M[mcp_server.py<br/>Python stdlib]
-        S[Claude Code Settings<br/>~/.claude/settings.json]
-        C[CLAUDE.md<br/>Agent instructions]
-    end
-
-    subgraph "Claude Code Session"
-        A[Claude Agent]
-    end
-
-    V -->|filesystem read| M
-    M -->|MCP stdio| A
-    S -->|registers MCP| A
-    C -->|instructs vault usage| A
-```
-
-### Installation Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Installer as install.sh
-    participant Vault as Obsidian Vault
-    participant FS as ~/.config/...
-    participant Claude as ~/.claude/
-
-    User->>Installer: ./install.sh --vault ~/Vault
-    Installer->>Vault: validate path
-    Installer->>FS: copy mcp_server.py
-    Installer->>Claude: register MCP in settings.json
-    Installer->>Claude: append instructions to CLAUDE.md
-    Installer-->>User: Done. Restart Claude Code.
-```
+> **No daemon. No background service. No manual startup.**
+>
+> Claude Code **spawns** `mcp_server.py` as a child process when your session starts. It reads your vault over the filesystem, responds to tool calls via JSON-RPC over `stdio`, and dies when you close Claude Code. You never run it manually.
 
 ### Agent Runtime Flow
 
@@ -229,6 +194,26 @@ obsidian-claude-bridge/
 | Sync to `DOMAIN_CONTEXT.md` | Static snapshot goes stale. Direct filesystem access is always up-to-date. |
 | Semantic RAG / embeddings | Adds complexity and dependencies. Keyword search is "good enough" for most vaults and costs zero tokens to index. |
 | Cloud-based memory | Your notes stay on your machine. No API keys, no subscription, no data leaves your laptop. |
+
+## What This Solves That Engram (and Others) Don't
+
+| Service | What it does | What it **doesn't** do | What this bridge covers |
+|---|---|---|---|
+| **Engram** | Memoria operativa de agente: guarda observaciones, bugs, decisiones entre sesiones. | No lee tu vault de Obsidian. No conoce tu documentación de dominio previa. | **Lee tu vault en tiempo real** como fuente de conocimiento estructurado antes de codear. |
+| **OpenContext** | Documentación estática para que el agente entienda la arquitectura del proyecto. | Es manual, estático, requiere que copies info de Obsidian a un archivo del repo. | **Conecta directamente** con Obsidian sin duplicar contenido. Siempre actualizado. |
+| **Obsidian MCP (genérico)** | Da acceso al agente a tu vault como un "disco externo". | No instruye al agente a *usarlo* antes de codear. El modelo puede ignorarlo. | **Inyecta instrucciones mandatorias** en `CLAUDE.md` para que el agente busque en el vault antes de tocar código. |
+| **Context file sync** | Exporta notas a un `CONTEXT.md` en el repo. | Snapshot estático que se pudre. No escala a vaults grandes. | **Acceso dinámico bajo demanda**: busca, lista y lee solo lo relevante para la tarea actual. |
+
+### El gap que cubre este bridge
+
+Engram y servicios similares resuelven **memoria de ejecución** ("qué hicimos ayer, qué bug encontramos"). Pero **ninguno resuelve memoria de dominio documentada** que vive en Obsidian.
+
+Este bridge cubre exactamente esa brecha:
+- **Memoria de ejecución** → Engram (observaciones entre sesiones).
+- **Memoria de dominio documentada** → **Este bridge** (vault de Obsidian como fuente de verdad).
+- **Contexto de proyecto estático** → OpenContext / `CONTEXT.md` (documentación de arquitectura en el repo).
+
+> **Uso recomendado**: Combiná este bridge con Engram. El bridge da contexto de dominio *antes* de codear; Engram guarda lo que aprendió *durante* la sesión.
 
 ## Windows Support
 
