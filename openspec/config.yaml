@@ -1,0 +1,14 @@
+project:
+  name: obsidian-claude-bridge
+  description: Installer and harness to connect Claude Code with Obsidian vault domain context
+  version: 0.1.0
+
+sdd:
+  strict_tdd: false
+  test_command: ""
+
+execution:
+  mode: interactive
+  artifact_store: openspec
+  pr_strategy: single-pr-default
+  review_budget_lines: 400
