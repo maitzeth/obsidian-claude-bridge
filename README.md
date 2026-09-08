@@ -199,21 +199,21 @@ obsidian-claude-bridge/
 
 | Service | What it does | What it **doesn't** do | What this bridge covers |
 |---|---|---|---|
-| **Engram** | Memoria operativa de agente: guarda observaciones, bugs, decisiones entre sesiones. | No lee tu vault de Obsidian. No conoce tu documentación de dominio previa. | **Lee tu vault en tiempo real** como fuente de conocimiento estructurado antes de codear. |
-| **OpenContext** | Documentación estática para que el agente entienda la arquitectura del proyecto. | Es manual, estático, requiere que copies info de Obsidian a un archivo del repo. | **Conecta directamente** con Obsidian sin duplicar contenido. Siempre actualizado. |
-| **Obsidian MCP (genérico)** | Da acceso al agente a tu vault como un "disco externo". | No instruye al agente a *usarlo* antes de codear. El modelo puede ignorarlo. | **Inyecta instrucciones mandatorias** en `CLAUDE.md` para que el agente busque en el vault antes de tocar código. |
-| **Context file sync** | Exporta notas a un `CONTEXT.md` en el repo. | Snapshot estático que se pudre. No escala a vaults grandes. | **Acceso dinámico bajo demanda**: busca, lista y lee solo lo relevante para la tarea actual. |
+| **Engram** | Operational agent memory: saves observations, bugs, decisions across sessions. | Does not read your Obsidian vault. Does not know your pre-existing domain documentation. | **Reads your vault in real time** as a structured knowledge source before coding. |
+| **OpenContext** | Static documentation so the agent understands project architecture. | Manual, static, requires copying info from Obsidian into a repo file. | **Connects directly** to Obsidian without duplicating content. Always up-to-date. |
+| **Obsidian MCP (generic)** | Gives the agent access to your vault like an "external drive". | Does not instruct the agent to *use* it before coding. The model may ignore it. | **Injects mandatory instructions** into `CLAUDE.md` so the agent searches the vault before touching code. |
+| **Context file sync** | Exports notes to a `CONTEXT.md` in the repo. | Static snapshot that rots. Does not scale to large vaults. | **Dynamic on-demand access**: searches, lists, and reads only what is relevant to the current task. |
 
-### El gap que cubre este bridge
+### The gap this bridge fills
 
-Engram y servicios similares resuelven **memoria de ejecución** ("qué hicimos ayer, qué bug encontramos"). Pero **ninguno resuelve memoria de dominio documentada** que vive en Obsidian.
+Engram and similar services solve **execution memory** ("what did we do yesterday, what bug did we find"). But **none solve documented domain memory** that lives in Obsidian.
 
-Este bridge cubre exactamente esa brecha:
-- **Memoria de ejecución** → Engram (observaciones entre sesiones).
-- **Memoria de dominio documentada** → **Este bridge** (vault de Obsidian como fuente de verdad).
-- **Contexto de proyecto estático** → OpenContext / `CONTEXT.md` (documentación de arquitectura en el repo).
+This bridge covers exactly that gap:
+- **Execution memory** → Engram (observations across sessions).
+- **Documented domain memory** → **This bridge** (Obsidian vault as source of truth).
+- **Static project context** → OpenContext / `CONTEXT.md` (architecture docs in the repo).
 
-> **Uso recomendado**: Combiná este bridge con Engram. El bridge da contexto de dominio *antes* de codear; Engram guarda lo que aprendió *durante* la sesión.
+> **Recommended usage**: Combine this bridge with Engram. The bridge provides domain context *before* coding; Engram saves what the agent learned *during* the session.
 
 ## Windows Support
 
