@@ -93,14 +93,23 @@ prompt_target_claude_md() {
     fi
 
     echo ""
-    log_info "Which CLAUDE.md should I modify?"
-    echo "  1) Global:  ~/.claude/CLAUDE.md   (applies to every project)"
-    echo "  2) Project: ${PWD}/CLAUDE.md"
-    echo "  3) Custom path"
+    log_info "Where should Claude use this vault?"
+    echo "  1) Every project   -> ~/.claude/CLAUDE.md + ~/.claude.json"
+    echo "  2) One project     -> <project>/CLAUDE.md + <project>/.mcp.json"
+    echo "  3) Custom CLAUDE.md path"
     echo ""
     read -rp "Choice [1-3, default: 1]: " choice
     case "${choice:-1}" in
-        2) CLAUDE_MD_TARGET="${PWD}/CLAUDE.md" ;;
+        2)
+            local project_dir
+            read -rp "Project directory [${PWD}]: " project_dir
+            project_dir="$(expand_tilde "${project_dir:-$PWD}")"
+            if [[ ! -d "$project_dir" ]]; then
+                log_err "Project directory does not exist: $project_dir"
+                exit 1
+            fi
+            CLAUDE_MD_TARGET="${project_dir}/CLAUDE.md"
+            ;;
         3) read -rp "Enter full path to CLAUDE.md: " CLAUDE_MD_TARGET ;;
         *) CLAUDE_MD_TARGET="${HOME}/.claude/CLAUDE.md" ;;
     esac

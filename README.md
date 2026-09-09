@@ -129,9 +129,13 @@ cd ~/code/my-app
 
 ### What the installer asks
 
+Run `./install.sh` with no flags and answer three prompts:
+
 1. **Vault path** — where your Obsidian notes live.
-2. **Which CLAUDE.md** — global (`~/.claude/CLAUDE.md`) or project (`./CLAUDE.md`).
+2. **Where to use it** — every project (`~/.claude/CLAUDE.md` + `~/.claude.json`), one project (asks for the project directory, then writes `<project>/CLAUDE.md` + `<project>/.mcp.json`), or a custom CLAUDE.md path.
 3. **Confirm** — shows what will change, asks `y/N`.
+
+Flags exist only for scripting; the interactive flow covers every option.
 
 ### After installation
 
