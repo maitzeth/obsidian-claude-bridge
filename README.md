@@ -49,6 +49,12 @@ Obsidian-Claude Bridge installs a **thin MCP server** that lets Claude Code read
 
 After installation, Claude Code **automatically searches your vault before modifying code** — as if it had read your docs beforehand.
 
+The installer does three things:
+
+1. Copies `mcp_server.py` to `~/.config/obsidian-claude-bridge/`.
+2. Registers it as an MCP server with Claude Code (`~/.claude.json` for user scope, or `.mcp.json` for project scope).
+3. Appends a marked instruction block to your `CLAUDE.md` telling the agent to consult the vault first.
+
 ## How It Works
 
 > **No daemon. No background service. No manual startup.**
@@ -81,17 +87,18 @@ sequenceDiagram
 |---|---|
 | **Zero dependencies** | Python 3.8+ stdlib only. No `pip install`. No Obsidian plugins. |
 | **Idempotent installer** | Run `install.sh` multiple times — never duplicates config or CLAUDE.md sections. |
-| **Global or per-project** | Modify `~/.claude/CLAUDE.md` (all projects) or `./CLAUDE.md` (one repo). |
-| **Safe uninstall** | `./uninstall.sh` removes only its own section; your existing CLAUDE.md is untouched. |
-| **Backup & rollback** | Every mutation is backed up before changes. Failure triggers automatic rollback. |
-| **Path traversal guard** | MCP server is locked to your vault directory; cannot escape. |
-| **Token-aware** | Search returns max 10 results, 2000-char previews. No vault flooding. |
+| **Global or per-project** | Modify `~/.claude/CLAUDE.md` (all projects) or `./CLAUDE.md` (one repo). MCP scope follows: `~/.claude.json` or `.mcp.json`. |
+| **Safe uninstall** | `./uninstall.sh` removes only its own marked section; the rest of your CLAUDE.md is untouched. |
+| **Backup & rollback** | Every file is backed up (`*.bak.<timestamp>`) before it is changed. A failed install restores what it touched and never rewrites malformed JSON. |
+| **Path traversal guard** | Relative paths only, resolved through `realpath`; symlinks and `../` cannot escape the vault. |
+| **Token-aware** | Search returns at most 10 results (cap 50) with 2000-char previews. Hidden folders like `.obsidian/` are skipped. |
+| **Portable shell** | Works on stock macOS bash 3.2, Linux, WSL and Git Bash. Falls back to `python` or `py` when `python3` is missing. |
 
 ## Prerequisites
 
-- **Python 3.8+** (`python3` or `python`)
-- **Bash** (Git Bash, WSL, macOS, or Linux)
-- **Claude Code** or **Open Code**
+- **Python 3.8+** (`python3`, `python` or `py`)
+- **Bash 3.2+** (Git Bash, WSL, macOS, or Linux)
+- **Claude Code** (the installer writes Claude Code's MCP config; other MCP clients can reuse `mcp_server.py` manually)
 - An **Obsidian vault** (any folder containing `.md` files)
 
 ## Quick Start
@@ -104,9 +111,21 @@ cd obsidian-claude-bridge
 # 2. Install (interactive)
 ./install.sh
 
-# 3. Or install non-interactively
+# 3. Or install non-interactively (global CLAUDE.md + user-scope MCP)
 ./install.sh --vault ~/Documents/ObsidianVault --global --yes
+
+# 4. Or per project (./CLAUDE.md + ./.mcp.json, commit both to share with your team)
+cd ~/code/my-app
+/path/to/obsidian-claude-bridge/install.sh --vault ~/Documents/ObsidianVault --claude-md ./CLAUDE.md --yes
 ```
+
+| Flag | Meaning |
+|---|---|
+| `-v, --vault PATH` | Obsidian vault directory |
+| `-c, --claude-md PATH` | CLAUDE.md to modify |
+| `-g, --global` | Shortcut for `--claude-md ~/.claude/CLAUDE.md` |
+| `-s, --scope user\|project` | Where to register the MCP server. Defaults to `user` for the global CLAUDE.md, `project` otherwise |
+| `-y, --yes` | Non-interactive |
 
 ### What the installer asks
 
@@ -116,14 +135,25 @@ cd obsidian-claude-bridge
 
 ### After installation
 
-Restart Claude Code or run `/mcp` to refresh tools. From then on, the agent will search your vault before writing code.
+Restart Claude Code. Run `/mcp` and confirm `obsidian-vault-mcp` shows as connected. For project scope, Claude Code asks you to approve the `.mcp.json` server the first time you open the folder.
+
+### What gets written where
+
+| Path | Content | Scope |
+|---|---|---|
+| `~/.config/obsidian-claude-bridge/mcp_server.py` | The MCP server | always |
+| `~/.claude.json` → `mcpServers.obsidian-vault-mcp` | Server registration | `--scope user` |
+| `<project>/.mcp.json` → `mcpServers.obsidian-vault-mcp` | Server registration | `--scope project` |
+| `CLAUDE.md` (between `<!-- obsidian-bridge:v1 -->` markers) | Agent instructions + vault root | always |
+
+The registration pins the absolute path of the Python interpreter that passed the version check, so the server keeps working even if your `PATH` changes.
 
 ## MCP Tools
 
 Once installed, Claude Code gains three tools:
 
 ### `search_vault`
-Search notes by keyword in filename or content.
+Case-insensitive keyword search. Filename matches rank first, then content matches (first 200k characters of each note are scanned). Hidden folders and non-`.md` files are ignored.
 
 ```json
 {
@@ -133,7 +163,7 @@ Search notes by keyword in filename or content.
 ```
 
 ### `read_note`
-Read the full content of a single note.
+Read the full content of a single note. Paths are relative to the vault root; absolute paths and traversal outside the vault are rejected.
 
 ```json
 {
@@ -157,10 +187,12 @@ Browse the vault structure.
 ./uninstall.sh
 ```
 
-### Remove everything (MCP config + server + instructions)
+### Remove everything (MCP registration + server + instructions)
 ```bash
 ./uninstall.sh --all
 ```
+
+`--all` removes the `obsidian-vault-mcp` entry from `~/.claude.json` **and** from the `.mcp.json` next to the chosen CLAUDE.md (deleting that file if the entry was the only one), then deletes `~/.config/obsidian-claude-bridge/`. Every modified file is backed up first.
 
 ### Target a specific CLAUDE.md
 ```bash
@@ -174,7 +206,10 @@ obsidian-claude-bridge/
 ├── install.sh          # Interactive installer (bash)
 ├── uninstall.sh        # Clean uninstaller (bash)
 ├── mcp_server.py       # MCP server (Python 3 stdlib)
+├── tests/
+│   └── test_mcp_server.py  # Protocol + tool tests (unittest, no deps)
 ├── README.md           # This file
+├── LICENSE             # MIT
 └── openspec/           # SDD design artifacts
     ├── explore.md
     ├── proposal.md
@@ -234,10 +269,40 @@ Install Python from [python.org](https://python.org) or your package manager.
 Make sure you passed the vault root folder (the one containing `.obsidian/` and your notes).
 
 ### Agent doesn't see the tools
-Restart Claude Code or type `/mcp` to refresh the tool registry.
+1. Restart Claude Code and run `/mcp`.
+2. Check the registration: `claude mcp list` should include `obsidian-vault-mcp`.
+3. Project scope: make sure you opened Claude Code inside the folder containing `.mcp.json` and approved the server.
+4. Test the server by hand:
+   ```bash
+   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python3 ~/.config/obsidian-claude-bridge/mcp_server.py --vault ~/Documents/ObsidianVault
+   ```
+
+### Installer warns about a virtualenv
+The registered interpreter is the one active when you ran `install.sh`. If that was a venv you later delete, re-run `./install.sh` from a shell with your system Python.
+
+### "Refusing to overwrite malformed JSON"
+`~/.claude.json` or `.mcp.json` is not valid JSON. The installer never rewrites a broken config; fix the file (or restore the latest `*.bak.*`) and re-run.
 
 ### Re-installing is safe
 Run `./install.sh` again anytime — it updates the MCP server and replaces the CLAUDE.md section without duplication.
+
+## Development
+
+```bash
+python3 -m unittest discover tests
+```
+
+The test suite drives the server through its stdio JSON-RPC loop: `initialize` handshake, notifications, error codes, ranking, traversal guards.
+
+## Changelog
+
+### 1.1.0
+- **Fixed:** MCP server now implements the `initialize` handshake, `ping`, and ignores notifications. The previous version answered `Method not found` to `initialize`, so Claude Code could never connect.
+- **Fixed:** MCP registration moved from `~/.claude/settings.json` (not read by Claude Code for servers) to `~/.claude.json` / `.mcp.json`.
+- **Fixed:** `install.sh` crashed with `NameError: os` while editing CLAUDE.md; `${var,,}` and `$(cat <<EOF)` constructs broke on macOS bash 3.2; scripts lacked the executable bit in git.
+- **Fixed:** Rollback could delete a pre-existing CLAUDE.md when the install failed before backing it up. Malformed JSON configs are now refused instead of overwritten.
+- **Fixed:** Path guard used a string prefix check (`/vault` matched `/vault2`); now uses `realpath` + `commonpath`.
+- **Added:** `--scope user|project`, uninstall backups, `python`/`py` fallback, unit tests, MIT license file.
 
 ## License
 
