@@ -87,7 +87,7 @@ sequenceDiagram
 |---|---|
 | **Zero dependencies** | Python 3.8+ stdlib only. No `pip install`. No Obsidian plugins. |
 | **Idempotent installer** | Run `install.sh` multiple times — never duplicates config or CLAUDE.md sections. |
-| **Global or per-project** | Modify `~/.claude/CLAUDE.md` (all projects) or `./CLAUDE.md` (one repo). MCP scope follows: `~/.claude.json` or `.mcp.json`. |
+| **Three scopes** | Global (every project), private per-project (`CLAUDE.local.md`, nothing committed), or team per-project (`CLAUDE.md` + `.mcp.json`). |
 | **Safe uninstall** | `./uninstall.sh` removes only its own marked section; the rest of your CLAUDE.md is untouched. |
 | **Backup & rollback** | Every file is backed up (`*.bak.<timestamp>`) before it is changed. A failed install restores what it touched and never rewrites malformed JSON. |
 | **Path traversal guard** | Relative paths only, resolved through `realpath`; symlinks and `../` cannot escape the vault. |
@@ -114,17 +114,20 @@ cd obsidian-claude-bridge
 # 3. Or install non-interactively (global CLAUDE.md + user-scope MCP)
 ./install.sh --vault ~/Documents/ObsidianVault --global --yes
 
-# 4. Or per project (./CLAUDE.md + ./.mcp.json, commit both to share with your team)
-cd ~/code/my-app
-/path/to/obsidian-claude-bridge/install.sh --vault ~/Documents/ObsidianVault --claude-md ./CLAUDE.md --yes
+# 4. Or for one project, private to you (nothing to commit)
+./install.sh --vault ~/Documents/ObsidianVault --project ~/code/my-app --yes
+
+# 5. Or for one project, shared with your team (commit CLAUDE.md and .mcp.json)
+./install.sh --vault ~/Documents/ObsidianVault --project ~/code/my-app --scope project --yes
 ```
 
 | Flag | Meaning |
 |---|---|
 | `-v, --vault PATH` | Obsidian vault directory |
-| `-c, --claude-md PATH` | CLAUDE.md to modify |
-| `-g, --global` | Shortcut for `--claude-md ~/.claude/CLAUDE.md` |
-| `-s, --scope user\|project` | Where to register the MCP server. Defaults to `user` for the global CLAUDE.md, `project` otherwise |
+| `-g, --global` | Every project: `~/.claude/CLAUDE.md` + user-scope MCP |
+| `-p, --project DIR` | One project. Defaults to a private install |
+| `-s, --scope user\|local\|project` | Override where the MCP server is registered (see table below) |
+| `-c, --claude-md PATH` | Explicit CLAUDE.md path (advanced) |
 | `-y, --yes` | Non-interactive |
 
 ### What the installer asks
@@ -132,7 +135,11 @@ cd ~/code/my-app
 Run `./install.sh` with no flags and answer three prompts:
 
 1. **Vault path** — where your Obsidian notes live.
-2. **Where to use it** — every project (`~/.claude/CLAUDE.md` + `~/.claude.json`), one project (asks for the project directory, then writes `<project>/CLAUDE.md` + `<project>/.mcp.json`), or a custom CLAUDE.md path.
+2. **Where to use it**:
+   1. **Every project** — `~/.claude/CLAUDE.md` + `~/.claude.json`.
+   2. **One project, only me** — asks for the project directory, writes `<project>/CLAUDE.local.md`, registers the server privately in `~/.claude.json` under that project, and adds `CLAUDE.local.md` to the project's `.gitignore`. Nothing to commit.
+   3. **One project, whole team** — writes `<project>/CLAUDE.md` + `<project>/.mcp.json`. Commit both.
+   4. **Custom CLAUDE.md path**.
 3. **Confirm** — shows what will change, asks `y/N`.
 
 Flags exist only for scripting; the interactive flow covers every option.
@@ -143,12 +150,13 @@ Restart Claude Code. Run `/mcp` and confirm `obsidian-vault-mcp` shows as connec
 
 ### What gets written where
 
-| Path | Content | Scope |
-|---|---|---|
-| `~/.config/obsidian-claude-bridge/mcp_server.py` | The MCP server | always |
-| `~/.claude.json` → `mcpServers.obsidian-vault-mcp` | Server registration | `--scope user` |
-| `<project>/.mcp.json` → `mcpServers.obsidian-vault-mcp` | Server registration | `--scope project` |
-| `CLAUDE.md` (between `<!-- obsidian-bridge:v1 -->` markers) | Agent instructions + vault root | always |
+| Scope | MCP registration | Instructions file | Visible to |
+|---|---|---|---|
+| `user` (global) | `~/.claude.json` → `mcpServers` | `~/.claude/CLAUDE.md` | you, every project |
+| `local` (private project) | `~/.claude.json` → `projects["<project>"].mcpServers` | `<project>/CLAUDE.local.md` (gitignored) | you, this project |
+| `project` (team) | `<project>/.mcp.json` | `<project>/CLAUDE.md` | everyone who clones |
+
+The server script itself always lives at `~/.config/obsidian-claude-bridge/mcp_server.py`. Instructions are written between `<!-- obsidian-bridge:v1 -->` markers so reinstalls replace rather than duplicate them. These are the same three scopes `claude mcp add --scope` uses.
 
 The registration pins the absolute path of the Python interpreter that passed the version check, so the server keeps working even if your `PATH` changes.
 
@@ -196,12 +204,14 @@ Browse the vault structure.
 ./uninstall.sh --all
 ```
 
-`--all` removes the `obsidian-vault-mcp` entry from `~/.claude.json` **and** from the `.mcp.json` next to the chosen CLAUDE.md (deleting that file if the entry was the only one), then deletes `~/.config/obsidian-claude-bridge/`. Every modified file is backed up first.
+Every modified file is backed up first (`*.bak.<timestamp>`). A file that contained only the bridge section is deleted rather than left empty.
 
-### Target a specific CLAUDE.md
+### Remove a per-project install (private or team)
 ```bash
-./uninstall.sh --claude-md ./CLAUDE.md --all
+./uninstall.sh --project ~/code/my-app --all
 ```
+
+Cleans `CLAUDE.md` and `CLAUDE.local.md` in that directory, and removes only that project's registration (local scope in `~/.claude.json`, or `.mcp.json`). A global install is left untouched, and vice versa. The server script is deleted only when no registration references it anymore.
 
 ## Project Structure
 
@@ -306,7 +316,7 @@ The test suite drives the server through its stdio JSON-RPC loop: `initialize` h
 - **Fixed:** `install.sh` crashed with `NameError: os` while editing CLAUDE.md; `${var,,}` and `$(cat <<EOF)` constructs broke on macOS bash 3.2; scripts lacked the executable bit in git.
 - **Fixed:** Rollback could delete a pre-existing CLAUDE.md when the install failed before backing it up. Malformed JSON configs are now refused instead of overwritten.
 - **Fixed:** Path guard used a string prefix check (`/vault` matched `/vault2`); now uses `realpath` + `commonpath`.
-- **Added:** `--scope user|project`, uninstall backups, `python`/`py` fallback, unit tests, MIT license file.
+- **Added:** three install scopes (`user`, `local`, `project`) with a matching interactive menu and `--project` flag; private installs use `CLAUDE.local.md`. Uninstall backups, `python`/`py` fallback, unit tests, MIT license file.
 
 ## License
 

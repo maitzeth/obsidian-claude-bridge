@@ -16,7 +16,8 @@ USER_MCP_FILE="${HOME}/.claude.json"
 VAULT_PATH=""
 CLAUDE_MD_TARGET=""
 USE_GLOBAL=false
-MCP_SCOPE=""          # user | project (derived from CLAUDE.md target when empty)
+PROJECT_DIR=""
+MCP_SCOPE=""          # user | local | project (derived when empty)
 MCP_FILE=""
 SKIP_CONFIRM=false
 PYTHON_CMD=""
@@ -36,17 +37,20 @@ Options:
   -v, --vault PATH      Path to your Obsidian vault directory
   -c, --claude-md PATH  Path to target CLAUDE.md (default: ask)
   -g, --global          Use global CLAUDE.md (~/.claude/CLAUDE.md)
+  -p, --project DIR     Project directory (implies a per-project install)
   -s, --scope SCOPE     Where to register the MCP server:
-                          user     -> ~/.claude.json (all projects)
-                          project  -> .mcp.json next to the target CLAUDE.md
-                        Default: user for global CLAUDE.md, project otherwise
+                          user     -> ~/.claude.json, every project
+                          local    -> ~/.claude.json, this project, only you
+                          project  -> <project>/.mcp.json, shared with your team
+                        Default: user for global CLAUDE.md, local for --project
   -y, --yes             Skip confirmation prompts
   -h, --help            Show this help message
 
 Examples:
   ./install.sh --vault ~/Documents/ObsidianVault
   ./install.sh --vault ~/Vault --global --yes
-  ./install.sh --vault ~/Vault --claude-md ./CLAUDE.md
+  ./install.sh --vault ~/Vault --project ~/code/my-app            # private
+  ./install.sh --vault ~/Vault --project ~/code/my-app --scope project  # team
 HELP
 }
 
@@ -85,56 +89,79 @@ require_arg() {
     fi
 }
 
-prompt_target_claude_md() {
-    [[ -n "$CLAUDE_MD_TARGET" ]] && return
-    if [[ "$USE_GLOBAL" == true ]]; then
-        CLAUDE_MD_TARGET="${HOME}/.claude/CLAUDE.md"
-        return
+prompt_project_dir() {
+    read -rp "Project directory [${PWD}]: " PROJECT_DIR
+    PROJECT_DIR="$(expand_tilde "${PROJECT_DIR:-$PWD}")"
+    if [[ ! -d "$PROJECT_DIR" ]]; then
+        log_err "Project directory does not exist: $PROJECT_DIR"
+        exit 1
     fi
+}
+
+prompt_target_claude_md() {
+    if [[ "$USE_GLOBAL" == true && -z "$CLAUDE_MD_TARGET" ]]; then
+        CLAUDE_MD_TARGET="${HOME}/.claude/CLAUDE.md"
+    fi
+    [[ -n "$CLAUDE_MD_TARGET" || -n "$PROJECT_DIR" ]] && return
 
     echo ""
     log_info "Where should Claude use this vault?"
-    echo "  1) Every project   -> ~/.claude/CLAUDE.md + ~/.claude.json"
-    echo "  2) One project     -> <project>/CLAUDE.md + <project>/.mcp.json"
-    echo "  3) Custom CLAUDE.md path"
+    echo "  1) Every project            -> ~/.claude/CLAUDE.md + ~/.claude.json"
+    echo "  2) One project, only me     -> <project>/CLAUDE.local.md + ~/.claude.json (nothing to commit)"
+    echo "  3) One project, whole team  -> <project>/CLAUDE.md + <project>/.mcp.json (commit both)"
+    echo "  4) Custom CLAUDE.md path"
     echo ""
-    read -rp "Choice [1-3, default: 1]: " choice
+    read -rp "Choice [1-4, default: 1]: " choice
     case "${choice:-1}" in
-        2)
-            local project_dir
-            read -rp "Project directory [${PWD}]: " project_dir
-            project_dir="$(expand_tilde "${project_dir:-$PWD}")"
-            if [[ ! -d "$project_dir" ]]; then
-                log_err "Project directory does not exist: $project_dir"
-                exit 1
-            fi
-            CLAUDE_MD_TARGET="${project_dir}/CLAUDE.md"
-            ;;
-        3) read -rp "Enter full path to CLAUDE.md: " CLAUDE_MD_TARGET ;;
+        2) prompt_project_dir; MCP_SCOPE="${MCP_SCOPE:-local}" ;;
+        3) prompt_project_dir; MCP_SCOPE="${MCP_SCOPE:-project}" ;;
+        4) read -rp "Enter full path to CLAUDE.md: " CLAUDE_MD_TARGET ;;
         *) CLAUDE_MD_TARGET="${HOME}/.claude/CLAUDE.md" ;;
     esac
-    if [[ -z "$CLAUDE_MD_TARGET" ]]; then
+    if [[ -z "$CLAUDE_MD_TARGET" && -z "$PROJECT_DIR" ]]; then
         log_err "CLAUDE.md path is required."
         exit 1
     fi
 }
 
 resolve_mcp_scope() {
-    if [[ -z "$MCP_SCOPE" ]]; then
+    if [[ -n "$PROJECT_DIR" ]]; then
+        MCP_SCOPE="${MCP_SCOPE:-local}"
+        if [[ -z "$CLAUDE_MD_TARGET" ]]; then
+            case "$MCP_SCOPE" in
+                local) CLAUDE_MD_TARGET="${PROJECT_DIR}/CLAUDE.local.md" ;;
+                *)     CLAUDE_MD_TARGET="${PROJECT_DIR}/CLAUDE.md" ;;
+            esac
+        fi
+    elif [[ -z "$MCP_SCOPE" ]]; then
         if [[ "$CLAUDE_MD_TARGET" == "${HOME}/.claude/CLAUDE.md" ]]; then
             MCP_SCOPE="user"
         else
             MCP_SCOPE="project"
         fi
     fi
+    [[ -n "$PROJECT_DIR" ]] || PROJECT_DIR="$(dirname "$CLAUDE_MD_TARGET")"
     case "$MCP_SCOPE" in
-        user)    MCP_FILE="$USER_MCP_FILE" ;;
-        project) MCP_FILE="$(dirname "$CLAUDE_MD_TARGET")/.mcp.json" ;;
+        user|local) MCP_FILE="$USER_MCP_FILE" ;;
+        project)    MCP_FILE="${PROJECT_DIR}/.mcp.json" ;;
         *)
-            log_err "Invalid --scope '${MCP_SCOPE}'. Use 'user' or 'project'."
+            log_err "Invalid --scope '${MCP_SCOPE}'. Use 'user', 'local' or 'project'."
             exit 1
             ;;
     esac
+}
+
+ensure_gitignored() {
+    # $1 = project dir, $2 = file name. Only acts inside a git repo.
+    local dir="$1" name="$2"
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+    if git -C "$dir" check-ignore -q "$name" 2>/dev/null; then
+        return 0
+    fi
+    [[ -f "${dir}/.gitignore" && -s "${dir}/.gitignore" && "$(tail -c1 "${dir}/.gitignore")" != "" ]] && echo >> "${dir}/.gitignore"
+    echo "$name" >> "${dir}/.gitignore"
+    log_ok "Added ${name} to ${dir}/.gitignore"
 }
 
 validate_vault() {
@@ -190,6 +217,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -v|--vault)     require_arg "$1" $#; VAULT_PATH="$2"; shift 2 ;;
         -c|--claude-md) require_arg "$1" $#; CLAUDE_MD_TARGET="$2"; shift 2 ;;
+        -p|--project)   require_arg "$1" $#; PROJECT_DIR="$2"; shift 2 ;;
         -s|--scope)     require_arg "$1" $#; MCP_SCOPE="$2"; shift 2 ;;
         -g|--global)    USE_GLOBAL=true; shift ;;
         -y|--yes)       SKIP_CONFIRM=true; shift ;;
@@ -224,10 +252,16 @@ validate_vault "$VAULT_PATH"
 VAULT_PATH="$(cd "$VAULT_PATH" && pwd -P)"
 
 prompt_target_claude_md
+if [[ -n "$PROJECT_DIR" ]]; then
+    PROJECT_DIR="$(expand_tilde "$PROJECT_DIR")"
+    [[ -d "$PROJECT_DIR" ]] || { log_err "Project directory does not exist: $PROJECT_DIR"; exit 1; }
+    PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd -P)"
+fi
+resolve_mcp_scope
 CLAUDE_MD_TARGET="$(expand_tilde "$CLAUDE_MD_TARGET")"
 # Normalise to an absolute path without requiring the file to exist yet.
 CLAUDE_MD_TARGET="$("$PYTHON_CMD" -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$CLAUDE_MD_TARGET")"
-resolve_mcp_scope
+PROJECT_DIR="$(dirname "$CLAUDE_MD_TARGET")"
 
 # --- Confirm ---
 if [[ "$SKIP_CONFIRM" != true ]]; then
@@ -262,10 +296,10 @@ mkdir -p "$(dirname "$MCP_FILE")"
 MCP_BACKUP="$(backup_file "$MCP_FILE")"
 MCP_TOUCHED=true
 
-"$PYTHON_CMD" - "$MCP_FILE" "$SERVER_NAME" "$INSTALL_DIR/mcp_server.py" "$VAULT_PATH" <<'PYEOF'
+"$PYTHON_CMD" - "$MCP_FILE" "$SERVER_NAME" "$INSTALL_DIR/mcp_server.py" "$VAULT_PATH" "$MCP_SCOPE" "$PROJECT_DIR" <<'PYEOF'
 import json, os, sys
 
-config_path, server_name, server_path, vault_path = sys.argv[1:5]
+config_path, server_name, server_path, vault_path, scope, project_dir = sys.argv[1:7]
 
 data = {}
 if os.path.exists(config_path):
@@ -285,7 +319,12 @@ if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
     print(f"[WARN] Registering the virtualenv interpreter {sys.executable}; "
           "if you delete this venv the MCP server will stop working.", file=sys.stderr)
 
-servers = data.setdefault("mcpServers", {})
+if scope == "local":
+    # Claude Code keeps per-project private servers under projects[<abs path>].
+    container = data.setdefault("projects", {}).setdefault(project_dir, {})
+else:
+    container = data
+servers = container.setdefault("mcpServers", {})
 servers[server_name] = {
     "type": "stdio",
     "command": sys.executable,
@@ -354,7 +393,8 @@ with open(path, "w", encoding="utf-8") as f:
     f.write(new_content)
 PYEOF
 
-log_ok "CLAUDE.md updated"
+log_ok "$(basename "$CLAUDE_MD_TARGET") updated"
+[[ "$MCP_SCOPE" == "local" ]] && ensure_gitignored "$PROJECT_DIR" "$(basename "$CLAUDE_MD_TARGET")"
 
 trap - EXIT
 
@@ -372,11 +412,11 @@ echo "  MCP server: ${INSTALL_DIR}/mcp_server.py"
 echo ""
 echo "Next steps:"
 echo "  1. Restart Claude Code (or start a new session)."
-if [[ "$MCP_SCOPE" == "project" ]]; then
-    echo "  2. Open Claude Code inside $(dirname "$CLAUDE_MD_TARGET") and approve the project MCP server when prompted."
-else
-    echo "  2. Run '/mcp' to confirm '${SERVER_NAME}' is connected."
-fi
+case "$MCP_SCOPE" in
+    project) echo "  2. Open Claude Code inside ${PROJECT_DIR} and approve the project MCP server when prompted." ;;
+    local)   echo "  2. Open Claude Code inside ${PROJECT_DIR} and run '/mcp' to confirm '${SERVER_NAME}' is connected." ;;
+    *)       echo "  2. Run '/mcp' to confirm '${SERVER_NAME}' is connected." ;;
+esac
 echo "  3. The agent will now search your vault before coding."
 echo ""
 echo "To uninstall: ./uninstall.sh --all"
