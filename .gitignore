@@ -24,3 +24,7 @@ Thumbs.db
 
 # OpenSpec backups
 openspec/*.bak.*
+
+# Local tool state
+.serena/
+.atl/
